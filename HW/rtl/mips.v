@@ -14,9 +14,9 @@ module mips(
 
 	wire [31:0] write_data_reg_MEM, write_data_reg_WB;
 	wire [31:0] alu_result_EX, alu_result_MEM;
-	wire [31:0] instruction_IF, instruction_ID,instruction_EX;
+	wire [31:0] instruction_instmem, instruction_IF, instruction_ID,instruction_EX;
 	wire [4:0] 	write_reg_EX, write_reg_MEM, write_reg_WB;
-	wire [31:0] read_data1_reg_ID, read_data1_reg_EX, read_data1_ID;
+	wire [31:0] read_data1_reg_ID, read_data1_EX, read_data1_ID;
 	wire [31:0] read_data_rt_ID, read_data2_ID, read_data2_EX; // Data2 in ID stage
 	wire [31:0] read_data2_reg_ID, read_data2_reg_EX, read_data2_reg_MEM;
 	wire [31:0] imm_extended_ID, imm_extended_EX;
@@ -42,6 +42,13 @@ module mips(
 	wire stall;
 	wire [1:0] Asrc, Bsrc;
 
+	wire flush_branch, flush_jmp;
+
+	assign flush_branch = (instruction_EX[31:26]==6'b000100 && zero_EX && Branch_EX) | 
+				(instruction_EX[31:26]== 6'b000101 && (~zero_EX) && Branch_EX) ;
+
+
+	assign flush_jmp = (PCSrc_ID == 2'b01) | (PCSrc_ID == 2'b10);
 
 	mips_stall_controller stall_controller(
 		.rs_i(rs_ID),
@@ -70,11 +77,11 @@ module mips(
 	
 	inst_memory InstMem(.clk(clk),.rst(rst),.adr(pc_IF),.instruction(instruction_IF));
 
-	assign in_pc = (instruction_EX[31:26]==6'b000100 && zero_EX && Branch_EX) ?  (pc_ID + (imm_extended_EX << 2)) :
-				(instruction_EX[31:26]== 6'b000101 && (~zero_EX) && Branch_EX) ?  (pc_ID + (imm_extended_EX << 2)) : 
+	assign in_pc = (instruction_EX[31:26]==6'b000100 && zero_EX && Branch_EX) ?  (pc_ID + (imm_extended_EX << 2)) : //beg
+				(instruction_EX[31:26]== 6'b000101 && (~zero_EX) && Branch_EX) ?  (pc_ID + (imm_extended_EX << 2)) : //bne
 				(PCSrc_ID == 2'b00) ?  pc4_IF:
 				(PCSrc_ID == 2'b01) ?  {pc_IF[31:28], instruction_ID[25:0] ,2'b00} :
-				(PCSrc_ID == 2'b10) ?  read_data1_reg_ID : 32'd0; // beq, bne
+				(PCSrc_ID == 2'b10) ?  read_data1_ID : 32'd0; 
 																// assume pc_ID = pc of EX inst + 4 ???
 
 	
@@ -86,7 +93,7 @@ module mips(
 	register #(96) IF_ID_preg(
 		.clk_i (clk),
 		.rst_ni(~rst),
-		.clear_i(1'b0),
+		.clear_i(flush_branch | flush_jmp),
 		.ld_i(~stall),
 		.reg_di({pc_IF, pc4_IF, instruction_IF}),
 		.reg_qo({pc_ID, pc4_ID, instruction_ID})
@@ -109,7 +116,8 @@ module mips(
 		.signed_imm(signed_imm_ID)
 		);
 
-	assign {RegWrite_ID, Branch_ID, MemRead_ID, MemWrite_ID, DataC_ID, PCSrc_ID} = ~stall &
+
+	assign {RegWrite_ID, Branch_ID, MemRead_ID, MemWrite_ID, DataC_ID, PCSrc_ID} = stall | flush_branch ? 0 :
 					 {RegWrite_ID_ctrl, Branch_ID_ctrl, MemRead_ID_ctrl, MemWrite_ID_ctrl, DataC_ID_ctrl, PCSrc_ID_ctrl};
 
 	reg_file RegFile(.clk(clk), .rst(rst), .RegWrite(RegWrite_WB),.read_reg1(rs_ID),
@@ -143,12 +151,12 @@ module mips(
 				AluOperation_ID, RegWrite_ID, rd_ID, rt_ID, read_data1_ID, read_data2_ID, read_data2_reg_ID,signed_imm_ID
 				,DataC_ID}),
 		.reg_qo({pc4_EX,instruction_EX,Branch_EX, imm_extended_EX, write_reg_sel_EX, MemWrite_EX, MemRead_EX, 
-				AluOperation_EX, RegWrite_EX, rd_EX, rt_EX, read_data1_reg_EX, read_data2_EX, read_data2_reg_EX,signed_imm_EX
+				AluOperation_EX, RegWrite_EX, rd_EX, rt_EX, read_data1_EX, read_data2_EX, read_data2_reg_EX,signed_imm_EX
 				,DataC_EX})
 	);
 
 	alu ALU(
-		.data1(read_data1_reg_EX),
+		.data1(read_data1_EX),
 		.data2(read_data2_EX),
 		.alu_op(AluOperation_EX),
 		.alu_result(alu_result_EX),
